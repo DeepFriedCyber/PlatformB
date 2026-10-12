@@ -91,3 +91,36 @@ export interface CompanyQuestionPerformance {
   avgPosition: number | null;
   evidenceQuality: 'high' | 'medium' | 'low' | null;
 }
+
+// Requirement matching engine interfaces
+export type RequirementStatus = 'supported' | 'contradicted' | 'not_established';
+
+export interface Requirement {
+  id: string;
+  capability: string;
+  value: string | null;
+  required: boolean;
+  preferred?: boolean;
+  negated?: boolean;
+  originalText?: string;
+}
+
+export interface RequirementEvaluation {
+  status: RequirementStatus;
+  evidenceSource?: EvidenceSource;
+  reason: string;
+  capabilityMatched?: boolean;
+}
+
+export interface SupplierEvaluation {
+  supplierName: string;
+  evaluations: Record<string, RequirementEvaluation>;
+  summary: {
+    totalRequired: number;
+    requiredSupported: number;
+    requiredNotEstablished: number;
+    requiredContradicted: number;
+    completionRate: number;
+    isCompleteMatch: boolean;
+  };
+}

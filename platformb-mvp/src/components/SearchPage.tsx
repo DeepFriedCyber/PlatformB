@@ -4,6 +4,19 @@ import { useState } from "react";
 import Link from "next/link";
 import { SOPHOS_COMPANY, SOPHOS_PRODUCTS, SOPHOS_SERVICES, SOPHOS_INTEGRATIONS, SOPHOS_COMMON_QUESTIONS } from "@/data";
 import { interpretQuery } from "@/lib/query-interpreter";
+import type { Requirement, SupplierEvaluation } from "@/types";
+import type { SupplierMatchClass } from "@/lib/matchers/requirement-match";
+import { parseQueryToRequirements, evaluateMultipleSuppliers, classifySupplierMatch } from "@/lib/matchers/requirement-match";
+import { getAllSuppliers } from "@/lib/suppliers/exports";
+
+// Shared hash function for consistent color mapping across all card components
+function hashString(str: string) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return hash;
+}
 
 function Button({ 
   children, 
@@ -49,9 +62,10 @@ function Button({
 
 interface SearchResultCardProps {
   product: typeof SOPHOS_PRODUCTS[0];
+  matchClass?: SupplierMatchClass;
 }
 
-function SearchResultCard({ product }: SearchResultCardProps) {
+function SearchResultCard({ product, matchClass }: SearchResultCardProps) {
   const categoryInitial = product.category.split(' ')[0];
   
   // Get a color based on the category for visual variety
@@ -82,6 +96,17 @@ function SearchResultCard({ product }: SearchResultCardProps) {
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs ml-2 bg-blue-50 text-blue-700">
               Demo data
             </span>
+            {matchClass && (
+              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs ml-2 ${
+                matchClass === "complete"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : matchClass === "excluded"
+                    ? "bg-rose-50 text-rose-700"
+                    : "bg-amber-50 text-amber-700"
+              }`}>
+                {matchClass === "complete" ? "Complete match" : matchClass === "excluded" ? "Excluded match" : "Potential match"}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -111,7 +136,7 @@ function SearchResultCard({ product }: SearchResultCardProps) {
                 {source.established && (
                   <span className="ml-2 flex items-center">
                     <span className="w-2 h-2 bg-emerald-500 rounded-full mr-1"></span>
-                    Verified
+                    Demo evidence established
                   </span>
                 )}
               </div>
@@ -136,26 +161,18 @@ function SearchResultCard({ product }: SearchResultCardProps) {
 
 interface ServiceCardProps {
   service: typeof SOPHOS_SERVICES[0];
+  matchClass?: SupplierMatchClass;
 }
 
-function ServiceCard({ service }: ServiceCardProps) {
+function ServiceCard({ service, matchClass }: ServiceCardProps) {
   const categoryInitial = service.category.split(' ')[0];
   
-  // Get a color based on the category for visual variety
+  // Get a color based on the category for visual variety (shared hashString defined at SearchPage top level)
   const getCategoryColor = (category: string) => {
     const colors = ['from-emerald-500 to-teal-600', 'from-indigo-500 to-purple-600', 'from-rose-500 to-pink-600', 'from-amber-500 to-orange-600', 'from-blue-500 to-cyan-600'];
     const index = Math.abs(hashString(category)) % colors.length;
     return colors[index];
   };
-  
-  // Simple hash function for consistent color mapping
-  function hashString(str: string) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return hash;
-  }
 
   return (
     <div className="border border-gray-200 rounded-xl p-6 hover:border-indigo-300/50 hover:shadow-lg transition-all duration-200 bg-white">
@@ -169,6 +186,17 @@ function ServiceCard({ service }: ServiceCardProps) {
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs ml-2 bg-blue-50 text-blue-700">
               Demo data
             </span>
+            {matchClass && (
+              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs ml-2 ${
+                matchClass === "complete"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : matchClass === "excluded"
+                    ? "bg-rose-50 text-rose-700"
+                    : "bg-amber-50 text-amber-700"
+              }`}>
+                {matchClass === "complete" ? "Complete match" : matchClass === "excluded" ? "Excluded match" : "Potential match"}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -200,9 +228,10 @@ function ServiceCard({ service }: ServiceCardProps) {
 
 interface IntegrationCardProps {
   integration: typeof SOPHOS_INTEGRATIONS[0];
+  matchClass?: SupplierMatchClass;
 }
 
-function IntegrationCard({ integration }: IntegrationCardProps) {
+function IntegrationCard({ integration, matchClass }: IntegrationCardProps) {
   // Get a color based on the integration name for visual variety
   const getCategoryColor = (name: string) => {
     const colors = ['from-blue-500 to-indigo-600', 'from-purple-500 to-pink-600', 'from-green-500 to-emerald-600', 'from-yellow-500 to-amber-600', 'from-red-500 to-rose-600'];
@@ -210,15 +239,6 @@ function IntegrationCard({ integration }: IntegrationCardProps) {
     return colors[index];
   };
   
-  // Simple hash function for consistent color mapping
-  function hashString(str: string) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return hash;
-  }
-
   return (
     <div className="border border-gray-200 rounded-xl p-6 hover:border-indigo-300/50 hover:shadow-lg transition-all duration-200 bg-white">
       <div className="flex items-start justify-between mb-4">
@@ -227,6 +247,17 @@ function IntegrationCard({ integration }: IntegrationCardProps) {
           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs ml-2 bg-blue-50 text-blue-700">
             Demo data
           </span>
+          {matchClass && (
+            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs ml-2 ${
+              matchClass === "complete"
+                ? "bg-emerald-50 text-emerald-700"
+                : matchClass === "excluded"
+                  ? "bg-rose-50 text-rose-700"
+                  : "bg-amber-50 text-amber-700"
+            }`}>
+              {matchClass === "complete" ? "Complete match" : matchClass === "excluded" ? "Excluded match" : "Potential match"}
+            </span>
+          )}
         </div>
       </div>
       
@@ -242,8 +273,7 @@ function IntegrationCard({ integration }: IntegrationCardProps) {
       <ul className="mt-4 space-y-2 text-sm text-gray-600">
         {integration.features.map((feat, i) => (
           <li key={i} className="flex items-center">
-            <span className="w-2.5 h-2.5 rounded-full 
-                    className={`bg-gradient-to-r ${getCategoryColor(integration.name)}`}"></span>
+            <span className={`w-2.5 h-2.5 rounded-full ${getCategoryColor(integration.name)}`}></span>
             <span className="ml-2">{feat}</span>
           </li>
         ))}
@@ -270,12 +300,45 @@ export default function SearchPage() {
   const [services, setServices] = useState<typeof SOPHOS_SERVICES>(SOPHOS_SERVICES.slice());
   const [integrations, setIntegrations] = useState<typeof SOPHOS_INTEGRATIONS>(SOPHOS_INTEGRATIONS.slice());
   const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [requirementEvaluations, setRequirementEvaluations] = useState<SupplierEvaluation[] | null>(null);
+
+  const evaluationBySupplierName = new Map<string, SupplierEvaluation>();
+  if (requirementEvaluations) {
+    requirementEvaluations.forEach((evaluation) => {
+      evaluationBySupplierName.set(evaluation.supplierName, evaluation);
+    });
+  }
+
+  const getMatchClassFor = (name: string): SupplierMatchClass | undefined => {
+    const evaluation = evaluationBySupplierName.get(name);
+    if (!evaluation) {
+      return undefined;
+    }
+    return classifySupplierMatch(evaluation);
+  };
 
   const handleSearch = () => {
     if (!searchQuery.trim()) return;
     
     const interpreted = interpretQuery(searchQuery.split(/\s+/));
     setInterpretation(interpreted);
+
+    const extractedRequirements = parseQueryToRequirements(searchQuery);
+    setRequirements(extractedRequirements);
+
+    const suppliers = getAllSuppliers(SOPHOS_PRODUCTS, SOPHOS_SERVICES, SOPHOS_INTEGRATIONS);
+    const supplierEvaluations = extractedRequirements.length > 0
+      ? evaluateMultipleSuppliers(extractedRequirements, suppliers)
+      : null;
+    setRequirementEvaluations(supplierEvaluations);
+
+    const evaluationByName = new Map<string, SupplierEvaluation>();
+    if (supplierEvaluations) {
+      supplierEvaluations.forEach((evaluation) => {
+        evaluationByName.set(evaluation.supplierName, evaluation);
+      });
+    }
     
     const lowerQuery = searchQuery.toLowerCase();
     
@@ -283,21 +346,50 @@ export default function SearchPage() {
       return product.description.toLowerCase().includes(lowerQuery) ||
              product.features.some(f => f.toLowerCase().includes(lowerQuery));
     });
-    
-    if (filteredProducts.length === 0 && !['MDR', 'firewall', 'email', 'microsoft', 'endpoint'].some(term => lowerQuery.includes(term))) {
-      setSearchResults(SOPHOS_PRODUCTS);
-    } else {
-      setSearchResults(filteredProducts);
-    }
-    
-    setServices(SOPHOS_SERVICES);
-    
+
+    const hasTermFallback = ['mdr', 'firewall', 'email', 'microsoft', 'endpoint'].some(term => lowerQuery.includes(term));
+    const productBaseline = filteredProducts.length === 0 && !hasTermFallback ? SOPHOS_PRODUCTS : filteredProducts;
+
+    const rankByRequirementEvaluation = <T extends { name: string }>(items: T[]): T[] => {
+      if (!supplierEvaluations || extractedRequirements.length === 0) {
+        return items;
+      }
+
+      const complete: T[] = [];
+      const potential: T[] = [];
+      const excluded: T[] = [];
+      const unrated: T[] = [];
+
+      items.forEach((item) => {
+        const evaluation = evaluationByName.get(item.name);
+        if (!evaluation) {
+          unrated.push(item);
+          return;
+        }
+
+        const classification = classifySupplierMatch(evaluation);
+        if (classification === "complete") {
+          complete.push(item);
+        } else if (classification === "potential") {
+          potential.push(item);
+        } else {
+          excluded.push(item);
+        }
+      });
+
+      return [...complete, ...potential, ...excluded, ...unrated];
+    };
+
+    setSearchResults(rankByRequirementEvaluation(productBaseline));
+    setServices(rankByRequirementEvaluation(SOPHOS_SERVICES));
+
     const hasMicrosoft = searchQuery.split(' ').some(w => w.toLowerCase().includes('microsoft'));
-    const microsoftIntegrations = SOPHOS_INTEGRATIONS.filter(i => 
+    const microsoftIntegrations = SOPHOS_INTEGRATIONS.filter(i =>
       (hasMicrosoft && i.name.toLowerCase().includes('microsoft')) ||
       i.categories.some(c => c.toLowerCase().includes(lowerQuery))
     );
-    setIntegrations(microsoftIntegrations.length > 0 ? microsoftIntegrations : SOPHOS_INTEGRATIONS);
+    const integrationBaseline = microsoftIntegrations.length > 0 ? microsoftIntegrations : SOPHOS_INTEGRATIONS;
+    setIntegrations(rankByRequirementEvaluation(integrationBaseline));
     
     setSearchQuery('');
   };
@@ -305,6 +397,8 @@ export default function SearchPage() {
   const handleClear = () => {
     setSearchQuery('');
     setInterpretation(null);
+    setRequirements([]);
+    setRequirementEvaluations(null);
     setSearchResults([]);
     setServices([]);
     setIntegrations([]);
@@ -352,6 +446,75 @@ export default function SearchPage() {
         </div>
       )}
 
+      {requirementEvaluations && requirements.length > 0 && (
+        <div className="bg-gradient-to-b from-indigo-50 via-indigo-100 to-indigo-50/5 border border-indigo-200/50 rounded-xl p-6">
+          <h3 className="font-semibold text-indigo-900 mb-3 flex items-center gap-3">
+            <span>Requirement Outcomes</span>
+            <span className="text-xs bg-indigo-100 px-2.5 py-0.5 rounded-full text-indigo-800 font-medium">Demo data</span>
+          </h3>
+
+          <div className="mb-4 text-sm text-indigo-800">
+            {requirements.map((req) => (
+              <div key={req.id} className="mb-1">
+                <span className="font-medium">{req.capability}</span>
+                <span className="ml-2 text-indigo-700">{req.required ? "required" : "preferred"}</span>
+                {req.negated && <span className="ml-2 text-rose-700">negated</span>}
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-4">
+            {requirementEvaluations.every((evaluation) => !evaluation.summary.isCompleteMatch) && (
+              <p className="text-xs text-indigo-800 bg-indigo-100/80 border border-indigo-200 rounded p-2">
+                Ranking limitation: requirement-specific demo evidence is incomplete for some capabilities. Potential matches remain visible and are not treated as contradictions.
+              </p>
+            )}
+            {requirementEvaluations.map((supplierEvaluation) => (
+              <div key={supplierEvaluation.supplierName} className="rounded-lg border border-indigo-200 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-gray-900">{supplierEvaluation.supplierName}</p>
+                  <p className="text-xs text-gray-600">
+                    Class: {classifySupplierMatch(supplierEvaluation)} | Complete match: {supplierEvaluation.summary.isCompleteMatch ? "Yes" : "No"} | Completion: {supplierEvaluation.summary.completionRate}%
+                  </p>
+                </div>
+
+                <ul className="mt-3 space-y-2 text-sm">
+                  {requirements.map((req) => {
+                    const evaluation = supplierEvaluation.evaluations[req.id];
+                    if (!evaluation) {
+                      return (
+                        <li key={`${supplierEvaluation.supplierName}-${req.id}`} className="text-gray-700">
+                          {req.capability}: not_established
+                        </li>
+                      );
+                    }
+
+                    const statusClassName = evaluation.status === "supported"
+                      ? "text-emerald-700"
+                      : evaluation.status === "contradicted"
+                        ? "text-rose-700"
+                        : "text-amber-700";
+
+                    return (
+                      <li key={`${supplierEvaluation.supplierName}-${req.id}`} className="text-gray-700">
+                        <span className="font-medium">{req.capability}:</span>
+                        <span className={`ml-2 font-semibold ${statusClassName}`}>{evaluation.status}</span>
+                        <span className="ml-2">{evaluation.reason}</span>
+                        {evaluation.evidenceSource && (
+                          <span className="ml-2 text-gray-500">
+                            Source: {evaluation.evidenceSource.title || evaluation.evidenceSource.source}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Search Results */}
       {(searchResults.length > 0 || services.length > 0 || integrations.length > 0) && (
         <div className="space-y-8">
@@ -368,7 +531,7 @@ export default function SearchPage() {
                </h3>
               <div className="grid gap-4 md:grid-cols-2">
                 {searchResults.map((product) => (
-                  <SearchResultCard key={product.name} product={product} />
+                  <SearchResultCard key={product.name} product={product} matchClass={getMatchClassFor(product.name)} />
                 ))}
               </div>
             </section>
@@ -383,7 +546,7 @@ export default function SearchPage() {
                </h3>
               <div className="grid gap-4 md:grid-cols-2">
                 {services.map((service) => (
-                  <ServiceCard key={service.name} service={service} />
+                  <ServiceCard key={service.name} service={service} matchClass={getMatchClassFor(service.name)} />
                 ))}
               </div>
             </section>
@@ -398,7 +561,7 @@ export default function SearchPage() {
                </h3>
               <div className="grid gap-4 md:grid-cols-2">
                 {integrations.map((integration) => (
-                  <IntegrationCard key={integration.name} integration={integration} />
+                  <IntegrationCard key={integration.name} integration={integration} matchClass={getMatchClassFor(integration.name)} />
                 ))}
               </div>
             </section>
