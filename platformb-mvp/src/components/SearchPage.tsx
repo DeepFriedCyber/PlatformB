@@ -4,9 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { SOPHOS_COMPANY, SOPHOS_PRODUCTS, SOPHOS_SERVICES, SOPHOS_INTEGRATIONS, SOPHOS_COMMON_QUESTIONS } from "@/data";
 import { interpretQuery } from "@/lib/query-interpreter";
-import type { Requirement, SupplierEvaluation } from "@/types";
+import type { ContentGap, Requirement, SupplierClarification, SupplierEvaluation } from "@/types";
 import type { SupplierMatchClass } from "@/lib/matchers/requirement-match";
 import { parseQueryToRequirements, evaluateMultipleSuppliers, classifySupplierMatch } from "@/lib/matchers/requirement-match";
+import { aggregateContentGaps, buildClarificationsForSupplier } from "@/lib/matchers/evidence-freshness";
 import { getAllSuppliers } from "@/lib/suppliers/exports";
 
 // Shared hash function for consistent color mapping across all card components
@@ -302,6 +303,9 @@ export default function SearchPage() {
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [requirementEvaluations, setRequirementEvaluations] = useState<SupplierEvaluation[] | null>(null);
+  const [clarifications, setClarifications] = useState<SupplierClarification[]>([]);
+  const [contentGaps, setContentGaps] = useState<ContentGap[]>([]);
+  const [supplierIdByName, setSupplierIdByName] = useState<Record<string, string>>({});
 
   const evaluationBySupplierName = new Map<string, SupplierEvaluation>();
   if (requirementEvaluations) {
@@ -328,10 +332,32 @@ export default function SearchPage() {
     setRequirements(extractedRequirements);
 
     const suppliers = getAllSuppliers(SOPHOS_PRODUCTS, SOPHOS_SERVICES, SOPHOS_INTEGRATIONS);
+    const supplierIDs: Record<string, string> = {};
+    suppliers.forEach((supplier) => {
+      supplierIDs[supplier.name] = supplier.data.id || supplier.name;
+    });
+    setSupplierIdByName(supplierIDs);
+
     const supplierEvaluations = extractedRequirements.length > 0
-      ? evaluateMultipleSuppliers(extractedRequirements, suppliers)
+      ? evaluateMultipleSuppliers(extractedRequirements, suppliers, { evaluationDate: "2026-10-12" })
       : null;
     setRequirementEvaluations(supplierEvaluations);
+
+    if (supplierEvaluations) {
+      const generatedClarifications = supplierEvaluations.flatMap((evaluation) =>
+        buildClarificationsForSupplier(
+          supplierIDs[evaluation.supplierName] || evaluation.supplierName,
+          evaluation.supplierName,
+          extractedRequirements,
+          evaluation.evaluations
+        )
+      );
+      setClarifications(generatedClarifications);
+      setContentGaps(aggregateContentGaps(generatedClarifications, "2026-10-12"));
+    } else {
+      setClarifications([]);
+      setContentGaps([]);
+    }
 
     const evaluationByName = new Map<string, SupplierEvaluation>();
     if (supplierEvaluations) {
@@ -399,6 +425,9 @@ export default function SearchPage() {
     setInterpretation(null);
     setRequirements([]);
     setRequirementEvaluations(null);
+    setClarifications([]);
+    setContentGaps([]);
+    setSupplierIdByName({});
     setSearchResults([]);
     setServices([]);
     setIntegrations([]);
@@ -520,6 +549,12 @@ export default function SearchPage() {
                             Publisher: {evaluation.evidenceRecord.publisher || "Unknown"} | Origin: {evaluation.evidenceRecord.origin} | Independent verification: {evaluation.evidenceRecord.independentlyVerified === null ? "Unknown" : evaluation.evidenceRecord.independentlyVerified ? "Yes" : "No"} | Demo: {evaluation.evidenceRecord.demoData ? "Yes" : "No"}
                           </span>
                         )}
+                        {evaluation.freshness && (
+                          <span className="ml-2 text-gray-500">
+                            Freshness: {evaluation.freshness.freshnessStatus} | {evaluation.freshness.freshnessReason}
+                            {evaluation.freshness.reviewDueAt ? ` | Review due: ${evaluation.freshness.reviewDueAt}` : ""}
+                          </span>
+                        )}
                         {evaluation.evidenceRecord?.sourceUrl && (
                           <span className="ml-2 text-gray-500">URL: {evaluation.evidenceRecord.sourceUrl}</span>
                         )}
@@ -527,8 +562,36 @@ export default function SearchPage() {
                     );
                   })}
                 </ul>
+
+                {clarifications.filter((item) => item.supplierId === (supplierIdByName[supplierEvaluation.supplierName] || supplierEvaluation.supplierName)).length > 0 && (
+                  <div className="mt-3 border-t border-gray-100 pt-3">
+                    <p className="text-xs font-semibold text-gray-700">Supplier clarification needed (open, not yet sent):</p>
+                    <ul className="mt-1 space-y-1 text-xs text-gray-600">
+                      {clarifications
+                        .filter((item) => item.supplierId === (supplierIdByName[supplierEvaluation.supplierName] || supplierEvaluation.supplierName))
+                        .map((clarification) => (
+                          <li key={clarification.id}>
+                            [{clarification.priority}] {clarification.question}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             ))}
+
+            {contentGaps.length > 0 && (
+              <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                <p className="text-xs font-semibold text-indigo-900">Content gaps (demo):</p>
+                <ul className="mt-1 space-y-1 text-xs text-indigo-800">
+                  {contentGaps.map((gap) => (
+                    <li key={gap.id}>
+                      {gap.supplierId} | {gap.requirementId} | {gap.reasonCode} | occurrences: {gap.occurrenceCount}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       )}

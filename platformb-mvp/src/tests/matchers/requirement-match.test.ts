@@ -8,6 +8,12 @@ import {
   evaluateMultipleSuppliers,
   parseQueryToRequirements,
 } from "@/lib/matchers/requirement-match";
+import {
+  DEFAULT_FRESHNESS_POLICY,
+  aggregateContentGaps,
+  assessEvidenceFreshness,
+  buildClarificationsForSupplier,
+} from "@/lib/matchers/evidence-freshness";
 import type { Supplier } from "@/lib/suppliers/exports";
 import SearchPage from "@/components/SearchPage";
 
@@ -68,6 +74,7 @@ const SUPPLIERS: Supplier[] = [
           sourceType: "product_page",
           publisher: "Alpha Secure",
           claimExcerpt: "Managed Detection and Response",
+          observedAt: "2026-09-15",
           evidenceStatus: "supports_claim",
           origin: "supplier_published",
           independentlyVerified: false,
@@ -681,6 +688,269 @@ describe("Requirement matching engine provenance", () => {
   it("both conflicting evidence IDs remain available", () => {
     const result = evaluateRequirement(req({ id: "MDR" }), [SUPPLIERS[2]]);
     expect(result?.conflictingEvidenceIds).toEqual(["ev-gamma-mdr-yes", "ev-gamma-mdr-no"]);
+  });
+
+  it("evidence within review interval is current", () => {
+    const assessment = assessEvidenceFreshness(
+      {
+        id: "ev-current",
+        supplierId: "alpha-secure",
+        sourceType: "product_page",
+        evidenceStatus: "supports_claim",
+        origin: "supplier_published",
+        independentlyVerified: false,
+        demoData: true,
+        observedAt: "2026-09-15",
+      },
+      "2026-10-12"
+    );
+    expect(assessment.freshnessStatus).toBe("current");
+  });
+
+  it("evidence beyond review interval is review_needed", () => {
+    const assessment = assessEvidenceFreshness(
+      {
+        id: "ev-old",
+        supplierId: "alpha-secure",
+        sourceType: "product_page",
+        evidenceStatus: "supports_claim",
+        origin: "supplier_published",
+        independentlyVerified: false,
+        demoData: true,
+        observedAt: "2025-01-01",
+      },
+      "2026-10-12"
+    );
+    expect(assessment.freshnessStatus).toBe("review_needed");
+  });
+
+  it("missing date returns unknown freshness", () => {
+    const assessment = assessEvidenceFreshness(
+      {
+        id: "ev-missing-date",
+        supplierId: "alpha-secure",
+        sourceType: "product_page",
+        evidenceStatus: "supports_claim",
+        origin: "supplier_published",
+        independentlyVerified: false,
+        demoData: true,
+      },
+      "2026-10-12"
+    );
+    expect(assessment.freshnessStatus).toBe("unknown");
+  });
+
+  it("invalid date returns unknown freshness", () => {
+    const assessment = assessEvidenceFreshness(
+      {
+        id: "ev-invalid-date",
+        supplierId: "alpha-secure",
+        sourceType: "product_page",
+        evidenceStatus: "supports_claim",
+        origin: "supplier_published",
+        independentlyVerified: false,
+        demoData: true,
+        observedAt: "not-a-date",
+      },
+      "2026-10-12"
+    );
+    expect(assessment.freshnessStatus).toBe("unknown");
+  });
+
+  it("future date returns unknown freshness", () => {
+    const assessment = assessEvidenceFreshness(
+      {
+        id: "ev-future-date",
+        supplierId: "alpha-secure",
+        sourceType: "product_page",
+        evidenceStatus: "supports_claim",
+        origin: "supplier_published",
+        independentlyVerified: false,
+        demoData: true,
+        observedAt: "2027-01-01",
+      },
+      "2026-10-12"
+    );
+    expect(assessment.freshnessStatus).toBe("unknown");
+  });
+
+  it("configurable review interval is respected", () => {
+    const assessment = assessEvidenceFreshness(
+      {
+        id: "ev-custom-policy",
+        supplierId: "alpha-secure",
+        sourceType: "product_page",
+        evidenceStatus: "supports_claim",
+        origin: "supplier_published",
+        independentlyVerified: false,
+        demoData: true,
+        observedAt: "2026-01-01",
+      },
+      "2026-10-12",
+      { reviewIntervalDays: 400 }
+    );
+    expect(assessment.freshnessStatus).toBe("current");
+  });
+
+  it("supplier-published evidence remains unverified even when current", () => {
+    const evaluations = evaluateMultipleSuppliers(parseQueryToRequirements("MDR"), [SUPPLIERS[0]], {
+      evaluationDate: "2026-10-12",
+      freshnessPolicy: DEFAULT_FRESHNESS_POLICY,
+    });
+    const evaluation = evaluations[0]?.evaluations["MDR"];
+    expect(evaluation?.status).toBe("supported");
+    expect(evaluation?.evidenceRecord?.origin).toBe("supplier_published");
+    expect(evaluation?.evidenceRecord?.independentlyVerified).toBe(false);
+  });
+
+  it("freshness does not change evidence truth status", () => {
+    const evaluations = evaluateMultipleSuppliers(parseQueryToRequirements("MDR"), [SUPPLIERS[0]], {
+      evaluationDate: "2028-10-12",
+    });
+    expect(evaluations[0]?.evaluations["MDR"]?.status).toBe("supported");
+    expect(evaluations[0]?.evaluations["MDR"]?.freshness?.freshnessStatus).toBe("review_needed");
+  });
+
+  it("conflicting evidence remains unresolved regardless of freshness", () => {
+    const evaluations = evaluateMultipleSuppliers(parseQueryToRequirements("MDR"), [SUPPLIERS[2]], {
+      evaluationDate: "2028-10-12",
+    });
+    expect(evaluations[0]?.evaluations["MDR"]?.status).toBe("not_established");
+    expect(evaluations[0]?.evaluations["MDR"]?.reason).toContain("Conflicting linked evidence");
+  });
+
+  it("missing-evidence clarification is generated", () => {
+    const requirements = parseQueryToRequirements("MDR");
+    const evaluations = evaluateMultipleSuppliers(requirements, [SUPPLIERS[3]]);
+    const clarifications = buildClarificationsForSupplier("no-evidence", "No Evidence Vendor", requirements, evaluations[0]!.evaluations);
+    expect(clarifications.some((item) => item.reasonCode === "missing_evidence")).toBe(true);
+  });
+
+  it("conflicting-evidence clarification is generated", () => {
+    const requirements = parseQueryToRequirements("MDR");
+    const evaluations = evaluateMultipleSuppliers(requirements, [SUPPLIERS[2]]);
+    const clarifications = buildClarificationsForSupplier("gamma-contradict", "Gamma Contradict", requirements, evaluations[0]!.evaluations);
+    expect(clarifications.some((item) => item.reasonCode === "conflicting_evidence")).toBe(true);
+  });
+
+  it("freshness-review clarification is generated", () => {
+    const requirements = parseQueryToRequirements("MDR");
+    const evaluations = evaluateMultipleSuppliers(requirements, [SUPPLIERS[0]], { evaluationDate: "2028-10-12" });
+    const clarifications = buildClarificationsForSupplier("alpha-secure", "Alpha Secure", requirements, evaluations[0]!.evaluations);
+    expect(clarifications.some((item) => item.reasonCode === "freshness_review")).toBe(true);
+  });
+
+  it("unknown-provenance clarification is generated", () => {
+    const supplierWithUnknownProvenance: Supplier = {
+      name: "Unknown Provenance Co",
+      data: {
+        id: "unknown-prov",
+        name: "Unknown Provenance Co",
+        evidenceSources: [{ type: "product_page", source: "Unknown source", established: true }],
+        capabilityClaims: [
+          {
+            id: "claim-unknown-prov-mdr",
+            supplierId: "unknown-prov",
+            capabilityId: "MDR",
+            statement: "Unknown provenance MDR claim",
+            evidenceIds: ["ev-unknown-prov"],
+            contradictingEvidenceIds: [],
+            provenanceStatus: "supported",
+            demoData: true,
+          },
+        ],
+        provenanceEvidence: [
+          {
+            id: "ev-unknown-prov",
+            supplierId: "unknown-prov",
+            sourceType: "product_page",
+            sourceTitle: "Unknown-origin evidence",
+            evidenceStatus: "supports_claim",
+            origin: "unknown",
+            independentlyVerified: null,
+            demoData: true,
+            observedAt: "2026-10-01",
+          },
+        ],
+      },
+    };
+
+    const requirements = parseQueryToRequirements("MDR");
+    const evaluations = evaluateMultipleSuppliers(requirements, [supplierWithUnknownProvenance]);
+    const clarifications = buildClarificationsForSupplier("unknown-prov", "Unknown Provenance Co", requirements, evaluations[0]!.evaluations);
+    expect(clarifications.some((item) => item.reasonCode === "unknown_provenance")).toBe(true);
+  });
+
+  it("clarification IDs are deterministic", () => {
+    const requirements = parseQueryToRequirements("MDR");
+    const evaluations = evaluateMultipleSuppliers(requirements, [SUPPLIERS[3]]);
+    const runA = buildClarificationsForSupplier("no-evidence", "No Evidence Vendor", requirements, evaluations[0]!.evaluations);
+    const runB = buildClarificationsForSupplier("no-evidence", "No Evidence Vendor", requirements, evaluations[0]!.evaluations);
+    expect(runA[0]?.id).toBe(runB[0]?.id);
+  });
+
+  it("clarifications are open and contain no fabricated supplier responses", () => {
+    const requirements = parseQueryToRequirements("MDR");
+    const evaluations = evaluateMultipleSuppliers(requirements, [SUPPLIERS[3]]);
+    const clarifications = buildClarificationsForSupplier("no-evidence", "No Evidence Vendor", requirements, evaluations[0]!.evaluations);
+    expect(clarifications.every((item) => item.status === "open")).toBe(true);
+  });
+
+  it("repeated gap aggregation increments deterministically", () => {
+    const clarifications = [
+      {
+        id: "clar-s1-mdr-missing_evidence",
+        supplierId: "s1",
+        requirementId: "MDR",
+        relatedEvidenceIds: [],
+        reasonCode: "missing_evidence" as const,
+        question: "Q",
+        priority: "high" as const,
+        status: "open" as const,
+      },
+    ];
+    const first = aggregateContentGaps(clarifications, "2026-10-12");
+    const second = aggregateContentGaps(clarifications, "2026-10-13", first);
+    expect(second[0]?.occurrenceCount).toBe(1);
+    expect(second[0]?.lastObservedAt).toBe("2026-10-13");
+  });
+
+  it("separate suppliers generate separate gaps", () => {
+    const clarifications = [
+      {
+        id: "clar-s1-mdr-missing_evidence",
+        supplierId: "s1",
+        requirementId: "MDR",
+        relatedEvidenceIds: [],
+        reasonCode: "missing_evidence" as const,
+        question: "Q1",
+        priority: "high" as const,
+        status: "open" as const,
+      },
+      {
+        id: "clar-s2-mdr-missing_evidence",
+        supplierId: "s2",
+        requirementId: "MDR",
+        relatedEvidenceIds: [],
+        reasonCode: "missing_evidence" as const,
+        question: "Q2",
+        priority: "high" as const,
+        status: "open" as const,
+      },
+    ];
+    const gaps = aggregateContentGaps(clarifications, "2026-10-12");
+    expect(gaps).toHaveLength(2);
+  });
+
+  it("buyer-facing UI shows freshness and clarification labels", () => {
+    render(createElement(SearchPage));
+
+    const input = screen.getByPlaceholderText(/Use natural language to search/i);
+    fireEvent.change(input, { target: { value: "Microsoft 365 integration" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(screen.getByText(/Freshness:/i)).toBeDefined();
+    expect(screen.getAllByText(/Supplier clarification needed/i).length).toBeGreaterThan(0);
   });
 
   it("duplicate requirement IDs do not distort summary counts", () => {

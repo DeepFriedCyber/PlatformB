@@ -109,6 +109,7 @@ export interface RequirementEvaluation {
   status: RequirementStatus;
   evidenceSource?: EvidenceSource;
   evidenceRecord?: ProvenanceEvidenceRecord;
+  freshness?: EvidenceFreshnessAssessment;
   conflictingEvidenceIds?: string[];
   claimId?: string;
   claimStatement?: string;
@@ -144,6 +145,8 @@ export interface ProvenanceEvidenceRecord {
   publisher?: string;
   claimExcerpt?: string;
   observedAt?: string;
+  publishedAt?: string;
+  lastCheckedAt?: string;
   evidenceStatus: ClaimEvidenceStatus;
   origin: EvidenceOrigin;
   independentlyVerified: boolean | null;
@@ -162,4 +165,56 @@ export interface SupplierCapabilityClaim {
   contradictingEvidenceIds: string[];
   provenanceStatus: ClaimProvenanceStatus;
   demoData: boolean;
+}
+
+export type EvidenceFreshnessStatus = 'current' | 'review_needed' | 'unknown';
+
+export interface EvidenceFreshnessPolicy {
+  reviewIntervalDays: number;
+}
+
+export interface EvidenceFreshnessAssessment {
+  evidenceId: string;
+  observedAt?: string;
+  publishedAt?: string;
+  lastCheckedAt?: string;
+  freshnessStatus: EvidenceFreshnessStatus;
+  freshnessReason: string;
+  reviewDueAt?: string;
+}
+
+export type ClarificationReasonCode =
+  | 'missing_evidence'
+  | 'conflicting_evidence'
+  | 'freshness_review'
+  | 'unknown_provenance'
+  | 'unestablished_requirement';
+
+export type ClarificationPriority = 'high' | 'medium' | 'low';
+
+export type ClarificationStatus = 'open' | 'answered' | 'resolved';
+
+export interface SupplierClarification {
+  id: string;
+  supplierId: string;
+  requirementId: string;
+  claimId?: string;
+  relatedEvidenceIds: string[];
+  reasonCode: ClarificationReasonCode;
+  question: string;
+  priority: ClarificationPriority;
+  status: ClarificationStatus;
+}
+
+export interface ContentGap {
+  id: string;
+  supplierId: string;
+  requirementId: string;
+  reasonCode: ClarificationReasonCode;
+  relatedClarificationIds: string[];
+  relatedEvidenceIds: string[];
+  firstObservedAt: string;
+  lastObservedAt: string;
+  occurrenceCount: number;
+  status: 'open' | 'resolved';
 }

@@ -1,11 +1,13 @@
 import type {
   EvidenceSource,
+  EvidenceFreshnessPolicy,
   ProvenanceEvidenceRecord,
   Requirement,
   RequirementEvaluation,
   SupplierCapabilityClaim,
   SupplierEvaluation,
 } from "@/types";
+import { DEFAULT_FRESHNESS_POLICY, assessEvidenceFreshness } from "@/lib/matchers/evidence-freshness";
 
 export interface SupplierRecord {
   name: string;
@@ -29,6 +31,11 @@ export interface SupplierRecord {
 }
 
 export type SupplierMatchClass = "complete" | "potential" | "excluded";
+
+interface EvaluationContext {
+  evaluationDate: string;
+  freshnessPolicy?: EvidenceFreshnessPolicy;
+}
 
 interface RequirementRule {
   id: string;
@@ -358,7 +365,7 @@ function selectEvidenceByStatus(
   return { broken };
 }
 
-function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRecord): RequirementEvaluation {
+function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRecord, context: EvaluationContext): RequirementEvaluation {
   if (requirement.id === "CONTEXT-BUYER-LOCATION-UK") {
     return {
       status: "not_established",
@@ -381,6 +388,7 @@ function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRe
   const evidenceMap = evidenceMapForSupplier(supplier);
   const support = selectEvidenceByStatus(claim, evidenceMap, "supports_claim");
   const contradiction = selectEvidenceByStatus(claim, evidenceMap, "contradicts_claim");
+  const freshnessPolicy = context.freshnessPolicy ?? DEFAULT_FRESHNESS_POLICY;
 
   const relationshipStatus: "linked" | "broken" | "absent" =
     support.record || contradiction.record
@@ -411,6 +419,7 @@ function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRe
         status: "supported",
         evidenceRecord: contradiction.record,
         evidenceSource: toEvidenceSource(contradiction.record),
+        freshness: assessEvidenceFreshness(contradiction.record, context.evaluationDate, freshnessPolicy),
         conflictingEvidenceIds,
         claimId: claim.id,
         claimStatement: claim.statement,
@@ -425,6 +434,7 @@ function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRe
         status: "contradicted",
         evidenceRecord: support.record,
         evidenceSource: toEvidenceSource(support.record),
+        freshness: assessEvidenceFreshness(support.record, context.evaluationDate, freshnessPolicy),
         conflictingEvidenceIds,
         claimId: claim.id,
         claimStatement: claim.statement,
@@ -450,6 +460,7 @@ function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRe
       status: "supported",
       evidenceRecord: support.record,
       evidenceSource: toEvidenceSource(support.record),
+      freshness: assessEvidenceFreshness(support.record, context.evaluationDate, freshnessPolicy),
       conflictingEvidenceIds,
       claimId: claim.id,
       claimStatement: claim.statement,
@@ -464,6 +475,7 @@ function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRe
       status: "contradicted",
       evidenceRecord: contradiction.record,
       evidenceSource: toEvidenceSource(contradiction.record),
+      freshness: assessEvidenceFreshness(contradiction.record, context.evaluationDate, freshnessPolicy),
       conflictingEvidenceIds,
       claimId: claim.id,
       claimStatement: claim.statement,
@@ -484,7 +496,7 @@ function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRe
   };
 }
 
-function evaluateSupplierRequirement(requirement: Requirement, supplier: SupplierRecord): RequirementEvaluation {
+function evaluateSupplierRequirement(requirement: Requirement, supplier: SupplierRecord, context: EvaluationContext): RequirementEvaluation {
   const knownRule = REQUIREMENT_RULES.find((rule) => rule.id === requirement.id);
 
   if (!knownRule || requirement.id.startsWith("UNKNOWN")) {
@@ -496,7 +508,7 @@ function evaluateSupplierRequirement(requirement: Requirement, supplier: Supplie
     };
   }
 
-  return evaluateKnownRequirement(requirement, supplier);
+  return evaluateKnownRequirement(requirement, supplier, context);
 }
 
 function dedupeRequirementsById(requirements: Requirement[]): Requirement[] {
@@ -571,7 +583,7 @@ export function classifySupplierMatch(result: SupplierEvaluation): SupplierMatch
   return "potential";
 }
 
-export function evaluateRequirement(requirement: Requirement, suppliers: SupplierRecord[]): RequirementEvaluation | null {
+export function evaluateRequirement(requirement: Requirement, suppliers: SupplierRecord[], context: EvaluationContext = { evaluationDate: "2026-10-12" }): RequirementEvaluation | null {
   if (!suppliers.length) {
     return null;
   }
@@ -585,17 +597,21 @@ export function evaluateRequirement(requirement: Requirement, suppliers: Supplie
     };
   }
 
-  return evaluateSupplierRequirement(requirement, suppliers[0]!);
+  return evaluateSupplierRequirement(requirement, suppliers[0]!, context);
 }
 
-export function evaluateMultipleSuppliers(input: Requirement[] | string[], suppliers: SupplierRecord[]): SupplierEvaluation[] {
+export function evaluateMultipleSuppliers(
+  input: Requirement[] | string[],
+  suppliers: SupplierRecord[],
+  context: EvaluationContext = { evaluationDate: "2026-10-12" }
+): SupplierEvaluation[] {
   const requirements = requirementsFromInput(input);
 
   return suppliers.map((supplier) => {
     const evaluations: Record<string, RequirementEvaluation> = {};
 
     for (const requirement of requirements) {
-      evaluations[requirement.id] = evaluateSupplierRequirement(requirement, supplier);
+      evaluations[requirement.id] = evaluateSupplierRequirement(requirement, supplier, context);
     }
 
     return {
@@ -606,7 +622,11 @@ export function evaluateMultipleSuppliers(input: Requirement[] | string[], suppl
   });
 }
 
-export function interpretAndEvaluate(queryTerms: string[], suppliers: SupplierRecord[]): { interpretations: string[]; evaluations: SupplierEvaluation[] | null } {
+export function interpretAndEvaluate(
+  queryTerms: string[],
+  suppliers: SupplierRecord[],
+  context: EvaluationContext = { evaluationDate: "2026-10-12" }
+): { interpretations: string[]; evaluations: SupplierEvaluation[] | null } {
   const query = queryTerms.join(" ").trim();
   const requirements = parseQueryToRequirements(query);
 
@@ -620,7 +640,7 @@ export function interpretAndEvaluate(queryTerms: string[], suppliers: SupplierRe
 
   return {
     interpretations,
-    evaluations: requirements.length > 0 ? evaluateMultipleSuppliers(requirements, suppliers) : null,
+    evaluations: requirements.length > 0 ? evaluateMultipleSuppliers(requirements, suppliers, context) : null,
   };
 }
 
