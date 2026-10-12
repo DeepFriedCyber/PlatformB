@@ -21,5 +21,8 @@ export default async function CompanyPageRoute({ params }: CompanyNameParams) {
     companyName = domainName.replace(/\..*$/, "");
   }
 
-  return <CompanyPage name={companyName} />;
+  // Reuse SophosDemoData from CompanyPage for all company views in MVP
+  const { SophosDemoData: companyData } = await import('@/components/CompanyPage');
+
+  return <CompanyPage name={companyName} companyData={companyData} />;
 }

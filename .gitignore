@@ -7,3 +7,19 @@ coverage/
 .env.*
 !.env.example
 *.log
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Local AI assistant configuration
+.continue/
+
+# Temporary diagnostic files
+typescript-errors.txt
+vitest-errors.txt
+platformb-fix-context.txt
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
