@@ -108,6 +108,11 @@ export interface Requirement {
 export interface RequirementEvaluation {
   status: RequirementStatus;
   evidenceSource?: EvidenceSource;
+  evidenceRecord?: ProvenanceEvidenceRecord;
+  conflictingEvidenceIds?: string[];
+  claimId?: string;
+  claimStatement?: string;
+  evidenceRelationshipStatus?: 'linked' | 'broken' | 'absent';
   reason: string;
   capabilityMatched?: boolean;
 }
@@ -123,4 +128,38 @@ export interface SupplierEvaluation {
     completionRate: number;
     isCompleteMatch: boolean;
   };
+}
+
+export type EvidenceOrigin = 'supplier_published' | 'third_party' | 'independent' | 'unknown';
+
+export type ClaimEvidenceStatus = 'supports_claim' | 'contradicts_claim' | 'insufficient' | 'unknown';
+
+export interface ProvenanceEvidenceRecord {
+  id: string;
+  supplierId: string;
+  productOrServiceId?: string;
+  sourceTitle?: string;
+  sourceUrl?: string;
+  sourceType: EvidenceSource['type'] | 'unknown';
+  publisher?: string;
+  claimExcerpt?: string;
+  observedAt?: string;
+  evidenceStatus: ClaimEvidenceStatus;
+  origin: EvidenceOrigin;
+  independentlyVerified: boolean | null;
+  demoData: boolean;
+}
+
+export type ClaimProvenanceStatus = 'stated' | 'supported' | 'contradicted' | 'unknown';
+
+export interface SupplierCapabilityClaim {
+  id: string;
+  supplierId: string;
+  productOrServiceId?: string;
+  capabilityId: string;
+  statement: string;
+  evidenceIds: string[];
+  contradictingEvidenceIds: string[];
+  provenanceStatus: ClaimProvenanceStatus;
+  demoData: boolean;
 }

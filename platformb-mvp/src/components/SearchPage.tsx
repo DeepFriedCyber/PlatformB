@@ -499,11 +499,29 @@ export default function SearchPage() {
                       <li key={`${supplierEvaluation.supplierName}-${req.id}`} className="text-gray-700">
                         <span className="font-medium">{req.capability}:</span>
                         <span className={`ml-2 font-semibold ${statusClassName}`}>{evaluation.status}</span>
-                        <span className="ml-2">{evaluation.reason}</span>
+                        <span className="ml-2">{evaluation.status === "not_established" ? "Not established — no applicable supporting evidence available." : evaluation.reason}</span>
+                        {evaluation.reason === "Conflicting linked evidence: both supporting and contradictory records found." && (
+                          <span className="ml-2 text-amber-700">Not established — conflicting evidence requires clarification.</span>
+                        )}
+                        {evaluation.conflictingEvidenceIds && evaluation.conflictingEvidenceIds.length > 0 && (
+                          <span className="ml-2 text-gray-500">Conflicting evidence IDs: {evaluation.conflictingEvidenceIds.join(", ")}</span>
+                        )}
+                        {evaluation.claimId && (
+                          <span className="ml-2 text-gray-500">Claim: {evaluation.claimId}</span>
+                        )}
+                        {evaluation.claimStatement && (
+                          <span className="ml-2 text-gray-500">Statement: {evaluation.claimStatement}</span>
+                        )}
                         {evaluation.evidenceSource && (
+                          <span className="ml-2 text-gray-500">Source: {evaluation.evidenceSource.title || evaluation.evidenceSource.source}</span>
+                        )}
+                        {evaluation.evidenceRecord && (
                           <span className="ml-2 text-gray-500">
-                            Source: {evaluation.evidenceSource.title || evaluation.evidenceSource.source}
+                            Publisher: {evaluation.evidenceRecord.publisher || "Unknown"} | Origin: {evaluation.evidenceRecord.origin} | Independent verification: {evaluation.evidenceRecord.independentlyVerified === null ? "Unknown" : evaluation.evidenceRecord.independentlyVerified ? "Yes" : "No"} | Demo: {evaluation.evidenceRecord.demoData ? "Yes" : "No"}
                           </span>
+                        )}
+                        {evaluation.evidenceRecord?.sourceUrl && (
+                          <span className="ml-2 text-gray-500">URL: {evaluation.evidenceRecord.sourceUrl}</span>
                         )}
                       </li>
                     );

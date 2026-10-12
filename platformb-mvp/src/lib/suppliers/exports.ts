@@ -1,6 +1,8 @@
-import type { EvidenceSource } from "@/types";
+import type { EvidenceSource, ProvenanceEvidenceRecord, SupplierCapabilityClaim } from "@/types";
+import { getDemoProvenanceForSupplier, toStableId } from "@/lib/suppliers/provenance-demo";
 
 export interface SupplierData {
+  id?: string;
   name: string;
   category?: string;
   description?: string;
@@ -13,6 +15,9 @@ export interface SupplierData {
   pricetiers?: string[];
   established?: boolean;
   evidenceSources: EvidenceSource[];
+  capabilityClaims?: SupplierCapabilityClaim[];
+  provenanceEvidence?: ProvenanceEvidenceRecord[];
+  demoData?: boolean;
 }
 
 export interface Supplier {
@@ -37,6 +42,7 @@ export function exportProducts(
   return products.map(p => ({
     name: p.name,
     data: {
+      id: toStableId(`product-${p.name}`),
       name: p.name,
       category: p.category,
       description: p.description,
@@ -44,6 +50,8 @@ export function exportProducts(
       supportedEnvironments: p.supportedEnvironments,
       pricetiers: p.pricetiers,
       evidenceSources: p.evidenceSources,
+      ...getDemoProvenanceForSupplier(toStableId(`product-${p.name}`), p.name),
+      demoData: true,
     },
   }));
 }
@@ -65,6 +73,7 @@ export function exportServices(
   return services.map(s => ({
     name: s.name,
     data: {
+      id: toStableId(`service-${s.name}`),
       name: s.name,
       category: s.category,
       description: s.description,
@@ -72,6 +81,8 @@ export function exportServices(
       targetOrgSizes: s.targetOrgSizes,
       industriesSupported: s.industriesSupported,
       evidenceSources: s.evidenceSources,
+      ...getDemoProvenanceForSupplier(toStableId(`service-${s.name}`), s.name),
+      demoData: true,
     },
   }));
 }
@@ -91,11 +102,14 @@ export function exportIntegrations(
   return integrations.map(i => ({
     name: i.name,
     data: {
+      id: toStableId(`integration-${i.name}`),
       name: i.name,
       categories: i.categories,
       features: i.features,
       established: i.established,
       evidenceSources: i.evidenceSources,
+      ...getDemoProvenanceForSupplier(toStableId(`integration-${i.name}`), i.name),
+      demoData: true,
     },
   }));
 }

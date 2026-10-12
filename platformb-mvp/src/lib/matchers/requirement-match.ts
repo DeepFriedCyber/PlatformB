@@ -1,8 +1,16 @@
-import type { EvidenceSource, Requirement, RequirementEvaluation, SupplierEvaluation } from "@/types";
+import type {
+  EvidenceSource,
+  ProvenanceEvidenceRecord,
+  Requirement,
+  RequirementEvaluation,
+  SupplierCapabilityClaim,
+  SupplierEvaluation,
+} from "@/types";
 
 export interface SupplierRecord {
   name: string;
   data: {
+    id?: string;
     name?: string;
     category?: string;
     description?: string;
@@ -14,6 +22,9 @@ export interface SupplierRecord {
     pricetiers?: string[];
     established?: boolean;
     evidenceSources: EvidenceSource[];
+    capabilityClaims?: SupplierCapabilityClaim[];
+    provenanceEvidence?: ProvenanceEvidenceRecord[];
+    demoData?: boolean;
   };
 }
 
@@ -90,7 +101,7 @@ const REQUIRED_MARKERS = [" must ", " required", " requirement", " need ", " nee
 const PREFERRED_MARKERS = [" prefer", " preferred", " ideally", " nice to have", " optional", " if possible"];
 
 const STOPWORDS = new Set<string>([
-  "a", "an", "the", "and", "or", "for", "to", "with", "without", "in", "on", "of", "we", "our", "is", "are", "be", "that", "this", "using", "use", "want", "dont", "don't", "do", "not", "need", "needs", "must", "should", "could", "would", "provider", "providers", "solution", "solutions", "service", "services", "team", "based"
+  "a", "an", "the", "and", "or", "for", "to", "with", "without", "in", "on", "of", "we", "our", "is", "are", "be", "that", "this", "using", "use", "want", "dont", "don't", "do", "not", "need", "needs", "must", "should", "could", "would", "provider", "providers", "solution", "solutions", "service", "services", "team", "based",
 ]);
 
 function normalizeText(input: string): string {
@@ -202,8 +213,7 @@ function collectResidualUnknownRequirement(query: string, consumedRanges: Array<
     return [];
   }
 
-  const text = meaningful.join(" ");
-  return [buildUnknownRequirement("UNKNOWN-1", text, true)];
+  return [buildUnknownRequirement("UNKNOWN-1", meaningful.join(" "), true)];
 }
 
 export function parseQueryToRequirements(query: string): Requirement[] {
@@ -260,7 +270,10 @@ export function parseQueryToRequirements(query: string): Requirement[] {
   if (hasUkToken && hasSmeToken && !hasExplicitUKSupplierRequirement) {
     const hasContext = requirements.some((requirement) => requirement.id === "CONTEXT-BUYER-LOCATION-UK");
     if (!hasContext) {
-      requirements.push(buildRequirement(REQUIREMENT_RULES.find((rule) => rule.id === "CONTEXT-BUYER-LOCATION-UK")!, trimmed, false, false));
+      const contextRule = REQUIREMENT_RULES.find((rule) => rule.id === "CONTEXT-BUYER-LOCATION-UK");
+      if (contextRule) {
+        requirements.push(buildRequirement(contextRule, trimmed, false, false));
+      }
     }
   }
 
@@ -285,108 +298,64 @@ export function parseQueryToRequirements(query: string): Requirement[] {
   return Array.from(deduped.values());
 }
 
-function getEstablishedEvidenceForRequirement(supplier: SupplierRecord, matched: boolean): EvidenceSource | undefined {
-  if (!matched) {
-    return undefined;
-  }
-  return supplier.data.evidenceSources.find((source) => source.established);
+function toEvidenceSource(record: ProvenanceEvidenceRecord): EvidenceSource {
+  return {
+    type: record.sourceType === "unknown" ? "announcement" : record.sourceType,
+    source: record.publisher || record.sourceTitle || "Unknown source",
+    title: record.sourceTitle,
+    url: record.sourceUrl,
+    established: record.evidenceStatus === "supports_claim" || record.evidenceStatus === "contradicts_claim",
+    date: record.observedAt,
+  };
 }
 
-function requirementKeywords(requirementId: string): string[] {
-  if (requirementId === "MDR") {
-    return ["mdr", "managed detection", "detection and response"];
-  }
-  if (requirementId === "EDR") {
-    return ["edr", "endpoint detection", "endpoint response"];
-  }
-  if (requirementId === "MICROSOFT-365") {
-    return ["microsoft 365", "m365", "office 365", "defender"];
-  }
-  if (requirementId === "UK-SERVICE-COVERAGE") {
-    return ["uk", "united kingdom", "uk customer", "uk coverage"];
-  }
-  if (requirementId === "UK-SERVICE-TEAM") {
-    return ["uk support", "uk service team", "united kingdom support"];
-  }
-  if (requirementId === "UK-DATA-RESIDENCY") {
-    return ["uk data residency", "data in uk", "hosted in uk", "uk region"];
-  }
-  if (requirementId === "SME-SUITABILITY") {
-    return ["sme", "small business", "small businesses"];
-  }
-  return [];
+function findClaimForRequirement(requirement: Requirement, supplier: SupplierRecord): SupplierCapabilityClaim | undefined {
+  const claims = supplier.data.capabilityClaims ?? [];
+  const supplierId = supplier.data.id;
+
+  return claims.find((claim) => {
+    if (supplierId && claim.supplierId !== supplierId) {
+      return false;
+    }
+    return claim.capabilityId === requirement.id;
+  });
 }
 
-function evidenceMentionsRequirement(source: EvidenceSource, requirementId: string): boolean {
-  const evidenceText = normalizePhrase([source.source, source.title ?? "", source.url ?? "", source.type].join(" "));
-  const keywords = requirementKeywords(requirementId);
-  if (!keywords.length) {
-    return false;
+function evidenceMapForSupplier(supplier: SupplierRecord): Map<string, ProvenanceEvidenceRecord> {
+  const map = new Map<string, ProvenanceEvidenceRecord>();
+  for (const record of supplier.data.provenanceEvidence ?? []) {
+    if (record.supplierId !== (supplier.data.id ?? record.supplierId)) {
+      continue;
+    }
+    map.set(record.id, record);
   }
-  return keywords.some((keyword) => evidenceText.includes(normalizePhrase(keyword)));
+  return map;
 }
 
-function selectRequirementSpecificEvidence(supplier: SupplierRecord, requirementId: string): EvidenceSource | undefined {
-  return supplier.data.evidenceSources.find((source) => source.established && evidenceMentionsRequirement(source, requirementId));
-}
+function selectEvidenceByStatus(
+  claim: SupplierCapabilityClaim,
+  evidenceMap: Map<string, ProvenanceEvidenceRecord>,
+  status: "supports_claim" | "contradicts_claim"
+): { record?: ProvenanceEvidenceRecord; broken: boolean } {
+  const ids = status === "supports_claim" ? claim.evidenceIds : claim.contradictingEvidenceIds;
+  let broken = false;
 
-function joinSupplierText(supplier: SupplierRecord): string {
-  const fields = [
-    supplier.name,
-    supplier.data.name ?? "",
-    supplier.data.category ?? "",
-    supplier.data.description ?? "",
-    ...(supplier.data.features ?? []),
-    ...(supplier.data.capabilities ?? []),
-    ...(supplier.data.categories ?? []),
-    ...(supplier.data.supportedEnvironments ?? []),
-    ...(supplier.data.targetOrgSizes ?? []),
-    ...(supplier.data.pricetiers ?? []),
-  ];
-  return ` ${normalizePhrase(fields.join(" "))} `;
-}
-
-function hasPositiveSignal(requirementId: string, text: string): boolean {
-  if (requirementId === "MDR") {
-    return text.includes(" mdr ") || text.includes(" managed detection and response ");
-  }
-  if (requirementId === "EDR") {
-    return text.includes(" edr ") || text.includes(" endpoint detection and response ");
-  }
-  if (requirementId === "MICROSOFT-365") {
-    return text.includes(" microsoft 365 ") || text.includes(" m365 ") || text.includes(" office 365 ") || text.includes(" microsoft defender ");
-  }
-  if (requirementId === "UK-SERVICE-COVERAGE") {
-    return text.includes(" serve uk customers ") || text.includes(" support uk customers ") || text.includes(" uk customer coverage ") || text.includes(" united kingdom ");
-  }
-  if (requirementId === "UK-SERVICE-TEAM") {
-    return text.includes(" uk support team ") || text.includes(" uk service team ") || text.includes(" uk based service team ") || text.includes(" uk-based service team ");
-  }
-  if (requirementId === "UK-DATA-RESIDENCY") {
-    return text.includes(" uk data residency ") || text.includes(" data residency in uk ") || text.includes(" hosted in uk ") || text.includes(" data in uk ");
-  }
-  if (requirementId === "SME-SUITABILITY") {
-    return text.includes(" sme ") || text.includes(" small business ") || text.includes(" small businesses ");
+  for (const id of ids) {
+    const record = evidenceMap.get(id);
+    if (!record) {
+      broken = true;
+      continue;
+    }
+    if (claim.productOrServiceId && record.productOrServiceId && claim.productOrServiceId !== record.productOrServiceId) {
+      broken = true;
+      continue;
+    }
+    if (record.evidenceStatus === status) {
+      return { record, broken };
+    }
   }
 
-  return false;
-}
-
-function hasExplicitNegativeSignal(requirementId: string, text: string): boolean {
-  if (requirementId === "MDR") {
-    return text.includes(" no mdr ") || text.includes(" without mdr ") || text.includes(" not mdr ");
-  }
-  if (requirementId === "MICROSOFT-365") {
-    return text.includes(" no microsoft 365 ") || text.includes(" without microsoft 365 ") || text.includes(" no m365 ");
-  }
-  if (requirementId === "EDR") {
-    return text.includes(" no edr ") || text.includes(" without edr ");
-  }
-  if (requirementId === "UK-DATA-RESIDENCY") {
-    return text.includes(" no uk data residency ") || text.includes(" data outside uk ");
-  }
-
-  return false;
+  return { broken };
 }
 
 function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRecord): RequirementEvaluation {
@@ -395,55 +364,123 @@ function evaluateKnownRequirement(requirement: Requirement, supplier: SupplierRe
       status: "not_established",
       reason: "Buyer-location context is not a supplier capability requirement.",
       capabilityMatched: false,
+      evidenceRelationshipStatus: "absent",
     };
   }
 
-  const text = joinSupplierText(supplier);
-  const matched = hasPositiveSignal(requirement.id, text);
-  const contradictedBySupplier = hasExplicitNegativeSignal(requirement.id, text);
+  const claim = findClaimForRequirement(requirement, supplier);
+  if (!claim) {
+    return {
+      status: "not_established",
+      reason: "Not established — no applicable supporting evidence available.",
+      capabilityMatched: false,
+      evidenceRelationshipStatus: "absent",
+    };
+  }
 
-  const supportEvidence = matched ? selectRequirementSpecificEvidence(supplier, requirement.id) : undefined;
-  const contradictionEvidence = contradictedBySupplier ? selectRequirementSpecificEvidence(supplier, requirement.id) : undefined;
+  const evidenceMap = evidenceMapForSupplier(supplier);
+  const support = selectEvidenceByStatus(claim, evidenceMap, "supports_claim");
+  const contradiction = selectEvidenceByStatus(claim, evidenceMap, "contradicts_claim");
+
+  const relationshipStatus: "linked" | "broken" | "absent" =
+    support.record || contradiction.record
+      ? "linked"
+      : support.broken || contradiction.broken
+        ? "broken"
+        : "absent";
+
+  const conflictingEvidenceIds = support.record && contradiction.record
+    ? [support.record.id, contradiction.record.id]
+    : undefined;
+
+  if (support.record && contradiction.record) {
+    return {
+      status: "not_established",
+      claimId: claim.id,
+      claimStatement: claim.statement,
+      evidenceRelationshipStatus: "linked",
+      conflictingEvidenceIds,
+      reason: "Conflicting linked evidence: both supporting and contradictory records found.",
+      capabilityMatched: true,
+    };
+  }
 
   if (requirement.negated) {
-    if (matched && supportEvidence) {
+    if (contradiction.record) {
+      return {
+        status: "supported",
+        evidenceRecord: contradiction.record,
+        evidenceSource: toEvidenceSource(contradiction.record),
+        conflictingEvidenceIds,
+        claimId: claim.id,
+        claimStatement: claim.statement,
+        evidenceRelationshipStatus: relationshipStatus,
+        reason: `Supported by contradiction evidence: ${contradiction.record.sourceTitle ?? contradiction.record.id}.`,
+        capabilityMatched: true,
+      };
+    }
+
+    if (support.record) {
       return {
         status: "contradicted",
-        evidenceSource: supportEvidence,
-        reason: `Contradicted by ${supportEvidence.source}: supplier evidence indicates ${requirement.capability}.`,
+        evidenceRecord: support.record,
+        evidenceSource: toEvidenceSource(support.record),
+        conflictingEvidenceIds,
+        claimId: claim.id,
+        claimStatement: claim.statement,
+        evidenceRelationshipStatus: relationshipStatus,
+        reason: `Contradicted by evidence that capability exists: ${support.record.sourceTitle ?? support.record.id}.`,
         capabilityMatched: true,
       };
     }
 
     return {
       status: "not_established",
-      reason: "Insufficient requirement-specific evidence to establish exclusion.",
+      conflictingEvidenceIds,
+      claimId: claim.id,
+      claimStatement: claim.statement,
+      evidenceRelationshipStatus: relationshipStatus,
+      reason: "Not established — no applicable supporting evidence available.",
       capabilityMatched: false,
     };
   }
 
-  if (matched && supportEvidence) {
+  if (support.record) {
     return {
       status: "supported",
-      evidenceSource: supportEvidence,
-      reason: `Supported by ${supportEvidence.source} for ${requirement.capability}.`,
+      evidenceRecord: support.record,
+      evidenceSource: toEvidenceSource(support.record),
+      conflictingEvidenceIds,
+      claimId: claim.id,
+      claimStatement: claim.statement,
+      evidenceRelationshipStatus: relationshipStatus,
+      reason: `Supported by linked evidence: ${support.record.sourceTitle ?? support.record.id}.`,
       capabilityMatched: true,
     };
   }
 
-  if (contradictedBySupplier && contradictionEvidence) {
+  if (contradiction.record) {
     return {
       status: "contradicted",
-      evidenceSource: contradictionEvidence,
-      reason: `Contradicted by ${contradictionEvidence.source}: supplier evidence indicates absence of ${requirement.capability}.`,
-      capabilityMatched: false,
+      evidenceRecord: contradiction.record,
+      evidenceSource: toEvidenceSource(contradiction.record),
+      conflictingEvidenceIds,
+      claimId: claim.id,
+      claimStatement: claim.statement,
+      evidenceRelationshipStatus: relationshipStatus,
+      reason: `Contradicted by linked evidence: ${contradiction.record.sourceTitle ?? contradiction.record.id}.`,
+      capabilityMatched: true,
     };
   }
 
   return {
     status: "not_established",
-    reason: "Requirement-specific evidence is missing or insufficient.",
-    capabilityMatched: matched,
+    conflictingEvidenceIds,
+    claimId: claim.id,
+    claimStatement: claim.statement,
+    evidenceRelationshipStatus: relationshipStatus,
+    reason: "Not established — no applicable supporting evidence available.",
+    capabilityMatched: false,
   };
 }
 
@@ -455,6 +492,7 @@ function evaluateSupplierRequirement(requirement: Requirement, supplier: Supplie
       status: "not_established",
       reason: `Unknown requirement preserved: ${requirement.originalText ?? requirement.value ?? requirement.capability}`,
       capabilityMatched: false,
+      evidenceRelationshipStatus: "absent",
     };
   }
 
@@ -543,6 +581,7 @@ export function evaluateRequirement(requirement: Requirement, suppliers: Supplie
       status: "not_established",
       reason: "Use per-supplier evaluation; cross-supplier aggregation is intentionally disabled.",
       capabilityMatched: false,
+      evidenceRelationshipStatus: "absent",
     };
   }
 
